@@ -34,6 +34,9 @@ services:
         - memcached
     command: /bin/bash -xcl "swift $${SWIFT_TEST_VERB-test} $${WARN_AS_ERROR_ARG-} $${SANITIZER_ARG-} $${IMPORT_CHECK_ARG-}"
 
+  update-benchmark-baseline:
+    <<: *common
+    command: /bin/bash -xcl "cd benchmarks && swift package --disable-sandbox benchmark"
   # util
 
   shell:
