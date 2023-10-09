@@ -19,27 +19,23 @@ import Sources
 import SwiftMemcache
 
 let benchmarks = {
+  Benchmark("Memcached Set Request", configuration: .init(metrics: [.mallocCountSmall, .mallocCountLarge, .mallocCountTotal, .memoryLeaked, .allocatedResidentMemory])) { benchmark in
+    try await withThrowingTaskGroup(of: Void.self) { group in
+     let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+     let memcachedConnection = MemcachedConnection(host: "127.0.0.1", port: 11211, eventLoopGroup: eventLoopGroup)
 
-    Benchmark.defaultConfiguration = .init(
-        metrics: [.mallocCountSmall, .mallocCountLarge, .mallocCountTotal, .memoryLeaked, .allocatedResidentMemory],
-        warmupIterations: 1
-    )
-    Benchmark("Memcached Get/Set Request") { benchmark in
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-            let memcachedConnection = MemcachedConnection(host: "memcached", port: 11211, eventLoopGroup: eventLoopGroup)
+     group.addTask { try await memcachedConnection.run() }
 
-            group.addTask { try await memcachedConnection.run() }
+      
+     let setValue = "bar"
+     try await memcachedConnection.set("foo", value: setValue)
 
-            let setValue = "bar"
-            try await memcachedConnection.set("foo", value: setValue)
+     for _ in benchmark.scaledIterations {
+       let getValue: String? = try await memcachedConnection.get("foo")
+       assert(getValue == setValue, "Value retrieved from Memcache does not match the set value")
+     }
 
-            for _ in benchmark.scaledIterations {
-                let getValue: String? = try await memcachedConnection.get("foo")
-                assert(getValue == setValue, "Value retrieved from Memcache does not match the set value")
-            }
-
-            group.cancelAll()
-        }
+     group.cancelAll()
     }
-}
+   }
+  }
