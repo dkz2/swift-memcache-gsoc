@@ -13,6 +13,8 @@ services:
     environment:
       - WARN_AS_ERROR_ARG=-Xswiftc -warnings-as-errors
       - IMPORT_CHECK_ARG=--explicit-target-dependency-import-check error
+      - SWIFT_VERSION=main
+
       # - SANITIZER_ARG=--sanitize=thread # TSan broken still
 
   shell:
@@ -20,3 +22,5 @@ services:
 
   update-benchmark-baseline:
     image: swift-memcache-gsoc:22.04-main
+    environment:
+      - SWIFT_VERSION=main

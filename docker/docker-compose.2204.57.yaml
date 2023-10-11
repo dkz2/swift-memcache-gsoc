@@ -13,6 +13,7 @@ services:
     image: swift-memcache-gsoc:22.04-5.7
     environment:
       - WARN_AS_ERROR_ARG=-Xswiftc -warnings-as-errors
+      - SWIFT_VERSION=5.7
       # - SANITIZER_ARG=--sanitize=thread # TSan broken still
 
   shell:

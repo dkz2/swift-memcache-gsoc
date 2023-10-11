@@ -1,0 +1,7 @@
+{
+    "mallocCountSmall": 120,
+    "mallocCountLarge": 2,
+    "mallocCountTotal": 220,
+    "memoryLeaked": 0,
+    "allocatedResidentMemory": 150
+}

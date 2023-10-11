@@ -1,4 +1,4 @@
-// swift-tools-version: 5.8
+// swift-tools-version: 5.7
 
 import PackageDescription
 
@@ -8,7 +8,7 @@ let package = Package(
         .macOS(.v13),
     ],
     dependencies: [
-        .package(path: "../"),
+        .package(name: "swift-memcache-gsoc", path: "../"),
         .package(url: "https://github.com/ordo-one/package-benchmark", .upToNextMajor(from: "1.0.0")),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.56.0"),
 

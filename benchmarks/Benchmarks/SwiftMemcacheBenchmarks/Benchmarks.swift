@@ -26,7 +26,7 @@ let benchmarks = {
 
      group.addTask { try await memcachedConnection.run() }
 
-      
+
      let setValue = "bar"
      try await memcachedConnection.set("foo", value: setValue)
 
