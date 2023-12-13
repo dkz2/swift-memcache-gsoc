@@ -163,6 +163,8 @@ extension MemcacheError {
             /// Indicates that the key already exist
             case keyExist
 
+            case connectionUnavailable
+
             var description: String {
                 switch self {
                 case .connectionShutdown:
@@ -173,6 +175,8 @@ extension MemcacheError {
                     return "Key not Found"
                 case .keyExist:
                     return "Key already Exist"
+                case .connectionUnavailable:
+                    return "Connection Unavailable"
                 }
             }
         }
@@ -204,6 +208,10 @@ extension MemcacheError {
         /// Indicates that the key already exists.
         public static var keyExist: Self {
             Self(.keyExist)
+        }
+
+        public static var connectionUnavailable: Self {
+            Self(.connectionUnavailable)
         }
     }
 

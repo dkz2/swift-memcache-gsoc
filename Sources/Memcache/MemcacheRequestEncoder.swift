@@ -92,6 +92,15 @@ struct MemcacheRequestEncoder: MessageToByteEncoder {
             // write separator
             out.writeInteger(UInt8.carriageReturn)
             out.writeInteger(UInt8.newline)
+
+        case .noop:
+            // write command
+            out.writeInteger(UInt8.m)
+            out.writeInteger(UInt8.n)
+
+            // write separator
+            out.writeInteger(UInt8.carriageReturn)
+            out.writeInteger(UInt8.newline)
         }
     }
 }

@@ -38,4 +38,5 @@ enum MemcacheRequest: Sendable {
     case get(GetCommand)
     case delete(DeleteCommand)
     case arithmetic(ArithmeticCommand)
+    case noop
 }

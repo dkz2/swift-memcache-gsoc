@@ -197,4 +197,11 @@ final class MemcacheRequestEncoderTests: XCTestCase {
         let expectedEncodedData = "ma foo M- D100\r\n"
         XCTAssertEqual(outBuffer.getString(at: 0, length: outBuffer.readableBytes), expectedEncodedData)
     }
+
+    func testEncodeNoOpRequest() {
+        let request = MemcacheRequest.noop
+        let outBuffer = self.encodeRequest(request)
+        let expectedEncodedData = "mn\r\n"
+        XCTAssertEqual(outBuffer.getString(at: 0, length: outBuffer.readableBytes), expectedEncodedData)
+    }
 }

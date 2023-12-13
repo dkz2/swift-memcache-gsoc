@@ -11,8 +11,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 //===----------------------------------------------------------------------===//
-@_spi(AsyncChannel)
 
+import _ConnectionPoolModule
 import NIOCore
 import NIOPosix
 import ServiceLifecycle
@@ -20,10 +20,18 @@ import ServiceLifecycle
 /// An actor to create a connection to a Memcache server.
 ///
 /// This actor can be used to send commands to the server.
-public actor MemcacheConnection: Service {
+public actor MemcacheConnection: Service, PooledConnection {
     private typealias StreamElement = (MemcacheRequest, CheckedContinuation<MemcacheResponse, Error>)
     private let host: String
     private let port: Int
+    public let id: Int
+    
+    // A promise to notify when the connection is closed
+    private var closePromise: EventLoopPromise<Void>?
+    
+    private var pendingRequests: [CheckedContinuation<MemcacheConnection, Error>] = []
+    
+    //private var pendingLeaseRequests: [ConnectionRequest<MemcacheConnection>] = []
 
     /// Enum representing the current state of the MemcacheConnection.
     ///
@@ -62,7 +70,9 @@ public actor MemcacheConnection: Service {
     ///   - host: The host address of the Memcache server.
     ///   - port: The port number of the Memcache server.
     ///   - eventLoopGroup: The event loop group to use for this connection.
-    public init(host: String, port: Int, eventLoopGroup: EventLoopGroup) {
+    public init(id: Int? = nil, host: String, port: Int, eventLoopGroup: EventLoopGroup) {
+        self.id = id ?? MemcacheConnection.generateUniqueId()
+
         self.host = host
         self.port = port
         let (stream, continuation) = AsyncStream<StreamElement>.makeStream()
@@ -74,7 +84,130 @@ public actor MemcacheConnection: Service {
             requestContinuation: continuation
         )
     }
+    
+    private static var uniqueIdCounter: Int = 1
 
+    private static func generateUniqueId() -> Int {
+        uniqueIdCounter += 1
+        return uniqueIdCounter
+    }
+
+    
+    // Conform to PooledConnection
+    nonisolated public func onClose(_ closure: @escaping @Sendable ((any Error)?) -> ()) {
+        Task {
+            await self.closePromise?.futureResult.whenComplete { result in
+                switch result {
+                case .success:
+                    closure(nil)
+                case .failure(let error):
+                    closure(error)
+                }
+            }
+        }
+    }
+
+    
+    nonisolated public func close() {
+        Task {
+            await self.closeConnection()
+        }
+    }
+    
+
+    private func closeConnection() async {
+            switch self.state {
+            case .running(_, let channel, _, _):
+                do {
+                    try await channel.channel.close().get()
+                    self.state = .finished
+                    self.closePromise?.succeed(())
+                } catch {
+                    self.state = .finished
+                    self.closePromise?.fail(error)
+                }
+            default:
+                self.state = .finished
+            }
+        }
+    
+    
+    /*
+    func enqueueLeaseRequest(_ request: ConnectionRequest<MemcacheConnection>) {
+            if self.isAvailable() {
+                // If the connection is available, fulfill the request immediately
+                request.complete(with: .success(self))
+            } else {
+                // Otherwise, enqueue the request
+                pendingLeaseRequests.append(request)
+            }
+        }
+
+        // Method to process pending lease requests
+        private func processPendingLeaseRequests() {
+            while let nextRequest = pendingLeaseRequests.first, self.isAvailable() {
+                pendingLeaseRequests.removeFirst()
+                nextRequest.complete(with: .success(self))
+            }
+        }
+     
+
+        // Modified releaseConnection method to process pending lease requests
+        func releaseConnection() async {
+            // Reset the connection state for the next user
+            resetConnectionState()
+
+            // Process any pending lease requests
+            processPendingLeaseRequests()
+        }
+    
+     */
+    
+
+    
+    // Method to release a connection back to the pool
+    func releaseConnection() async {
+        // Reset the connection state for the next user
+        resetConnectionState()
+
+        // Process any pending requests that were waiting for a connection
+        if let nextContinuation = pendingRequests.first {
+            pendingRequests.removeFirst()
+            nextContinuation.resume(returning: self)
+        }
+    }
+     
+
+    // Helper method to reset the connection state
+    private func resetConnectionState() {
+        switch self.state {
+        case .running(let bufferAllocator, let channel, _, let requestContinuation):
+            // Clear any pending requests
+            pendingRequests.removeAll()
+
+            // Reset the request stream
+            requestContinuation.finish()
+            let (newStream, newContinuation) = AsyncStream<StreamElement>.makeStream()
+            self.state = .running(
+                bufferAllocator: bufferAllocator,
+                channel: channel,
+                requestStream: newStream,
+                requestContinuation: newContinuation
+            )
+        default:
+            break
+        }
+    }
+
+    // Helper method to check if the connection is available
+    private func isAvailable() -> Bool {
+        // The connection is available if it's in the running state and there are no pending requests
+        if case .running = self.state, pendingRequests.isEmpty {
+            return true
+        }
+        return false
+    }
+        
     /// Runs the Memcache connection.
     ///
     /// This method connects to the Memcache server and starts handling requests. It only returns when the connection
@@ -95,7 +228,7 @@ public actor MemcacheConnection: Service {
                 return channel.eventLoop.makeCompletedFuture {
                     try channel.pipeline.syncOperations.addHandler(MessageToByteHandler(MemcacheRequestEncoder()))
                     try channel.pipeline.syncOperations.addHandler(ByteToMessageHandler(MemcacheResponseDecoder()))
-                    return try NIOAsyncChannel<MemcacheResponse, MemcacheRequest>(synchronouslyWrapping: channel)
+                    return try NIOAsyncChannel<MemcacheResponse, MemcacheRequest>(wrappingChannelSynchronously: channel)
                 }
             }.get()
 
@@ -106,47 +239,51 @@ public actor MemcacheConnection: Service {
             requestContinuation: continuation
         )
 
-        var iterator = channel.inboundStream.makeAsyncIterator()
+        //var iterator = channel.inboundStream.makeAsyncIterator()
         switch self.state {
-        case .running(_, let channel, let requestStream, let requestContinuation):
-            for await (request, continuation) in requestStream {
-                do {
-                    try await channel.outboundWriter.write(request)
-                    let responseBuffer = try await iterator.next()
+            case .running(_, let channel, let requestStream, let requestContinuation):
+                try await channel.executeThenClose { inbound, outbound in
+                    var inboundIterator = inbound.makeAsyncIterator()
+                    for await (request, continuation) in requestStream {
+                        do {
+                            try await outbound.write(request)
+                            let responseBuffer = try await inboundIterator.next()
 
-                    if let response = responseBuffer {
-                        continuation.resume(returning: response)
-                    } else {
-                        self.state = .finished
-                        requestContinuation.finish()
-                        continuation.resume(throwing: MemcacheError(
-                            code: .connectionShutdown,
-                            message: "The connection to the Memcache server was unexpectedly closed.",
-                            cause: nil,
-                            location: .here()
-                        ))
-                    }
-                } catch {
-                    switch self.state {
-                    case .running:
-                        self.state = .finished
-                        requestContinuation.finish()
-                        continuation.resume(throwing: MemcacheError(
-                            code: .connectionShutdown,
-                            message: "The connection to the Memcache server has shut down while processing a request.",
-                            cause: error,
-                            location: .here()
-                        ))
-                    case .initial, .finished:
-                        break
+                            if let response = responseBuffer {
+                                continuation.resume(returning: response)
+                            } else {
+                                self.state = .finished
+                                requestContinuation.finish()
+                                continuation.resume(throwing: MemcacheError(
+                                    code: .connectionShutdown,
+                                    message: "The connection to the Memcache server was unexpectedly closed.",
+                                    cause: nil,
+                                    location: .here()
+                                ))
+                            }
+                        } catch {
+                            switch self.state {
+                            case .running:
+                                self.state = .finished
+                                requestContinuation.finish()
+                                continuation.resume(throwing: MemcacheError(
+                                    code: .connectionShutdown,
+                                    message: "The connection to the Memcache server has shut down while processing a request.",
+                                    cause: error,
+                                    location: .here()
+                                ))
+                            case .initial, .finished:
+                                break
+                            }
+                        }
                     }
                 }
-            }
 
-        case .finished, .initial:
-            break
+            case .finished, .initial:
+                break
         }
     }
+
 
     /// Send a request to the Memcache server and returns a `MemcacheResponse`.
     private func sendRequest(_ request: MemcacheRequest) async throws -> MemcacheResponse {
@@ -497,4 +634,15 @@ public actor MemcacheConnection: Service {
 
         _ = try await self.sendRequest(request)
     }
+    
+    public func noop() async throws {
+        // Ensure the amount is greater than 0
+        //precondition(amount > 0, "Amount to decrement should be larger than 0")
+
+        let request = MemcacheRequest.noop
+
+        _ = try await self.sendRequest(request)
+    }
+    
+    
 }

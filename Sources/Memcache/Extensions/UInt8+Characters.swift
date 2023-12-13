@@ -22,6 +22,7 @@ extension UInt8 {
     static let d: UInt8 = .init(ascii: "d")
     static let a: UInt8 = .init(ascii: "a")
     static let v: UInt8 = .init(ascii: "v")
+    static let n: UInt8 = .init(ascii: "n")
     static let T: UInt8 = .init(ascii: "T")
     static let M: UInt8 = .init(ascii: "M")
     static let P: UInt8 = .init(ascii: "P")
